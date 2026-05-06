@@ -2,7 +2,7 @@ loss_type: 'w2'
 testdata_path: test_datasets/CurveFault-B/0.npy 
 model_path: Models/CurveFault-B
 k: 100
-seed: 0
+seed: 9
 shot_num: 10
 rho: 1.75
 tau: 0.0001
