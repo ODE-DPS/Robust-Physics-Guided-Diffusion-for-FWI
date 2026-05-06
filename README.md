@@ -42,7 +42,8 @@ uv sync
 ## Quick Start
 
 1. Edit experiment parameters in `configs/sample_config.yaml`.
-2. Run the main script:
+2. Obtain the model from the link [model](https://drive.google.com/drive/folders/145M3lmS7PA1cqz9UDam1NSC3BfM7hjPC?dmr=1&ec=wgc-drive-%5Bmodule%5D-goto), and then extract it to the Model folder
+3. Run the main script:
 
 ```bash
 python sample.py
