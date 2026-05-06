@@ -68,8 +68,6 @@ Typical outputs include:
 Key fields include:
 - `loss_type`: `mse`, `cumsum`, or `w2`
 - `rho`: guidance step size
-- `warmup_steps`: warmup length for guidance strength
-- `lam_range`, `lam_tv`: regularization weights
 - `shot_num`: number of shots used in simulation
 - `k`, `sigma`, `seed`: weighting/noise/randomness controls
 - `normalize`, `adap_along`: guidance behavior switches
