@@ -760,8 +760,12 @@ def save_latents_pt(x, path, rho):
 if __name__ == "__main__":
     image_size = 72
     batch_size = 1
-    
-    model_path = "Model"
+
+    config_path = './configs/sample-config-FlatFault-B.yaml'
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    model_path = config.get("model_path")
 
     unet = UNet2DModel.from_pretrained(model_path, subfolder="unet").to(device)
     
@@ -771,12 +775,9 @@ if __name__ == "__main__":
     ddpm_scheduler = DDPMScheduler.from_pretrained(model_path, subfolder="scheduler")
     ddpm_scheduler.set_timesteps(1000)  # Set the number of sampling steps
 
-    with open('./configs/sample_config.yaml', 'r') as f:
-        config = yaml.safe_load(f)
-
     loss_type = config.get("loss_type", 'w2')
-    ex_num = config.get("ex_num", 0)  # 69
-    x_true = np.load(f"test_datasets/{ex_num}.npy")
+    testdata_path = config.get("testdata_path")
+    x_true = np.load(testdata_path)
     x_true=torch.tensor(x_true, device=device, dtype=unet.dtype)/1500-2
     k = config.get("k", 100)
     seed = config.get("seed", 9)
@@ -871,7 +872,7 @@ if __name__ == "__main__":
         rho=rho
     )
 
-    shutil.copy('./configs/sample_config.yaml', os.path.join(target_path, "sample_config.yaml"))
+    shutil.copy(config_path, os.path.join(target_path, "sample_config.yaml"))
     
     # Save the final results to a file
     if error_history and error_0_history and loss_history:
