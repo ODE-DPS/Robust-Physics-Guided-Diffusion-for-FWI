@@ -14,14 +14,14 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def range_constraint_loss(x):
     """
-    计算范围约束损失: L_range = (1/N) * sum((x_i - clamp(x_i, -1, 1))^2)
-    这是一个软约束，鼓励x的值保持在[-1, 1]范围内
+    Compute the range constraint loss: L_range = (1/N) * sum((x_i - clamp(x_i, -1, 1))^2)
+    This is a soft constraint that encourages x to stay within [-1, 1].
     
     Args:
-        x (torch.Tensor): 输入张量
+        x (torch.Tensor): Input tensor
         
     Returns:
-        torch.Tensor: 范围约束损失
+        torch.Tensor: Range constraint loss
     """
     clamped_x = torch.clamp(x, -1, 1)
     loss = torch.mean((x - clamped_x) ** 2)
@@ -29,21 +29,21 @@ def range_constraint_loss(x):
 
 def tv_regularization(x):
     """
-    计算全变分(Total Variation)正则化项
-    TV正则化鼓励图像平滑，减少噪声
+    Compute the total variation regularization term.
+    TV regularization encourages image smoothness and reduces noise.
     
     Args:
-        x (torch.Tensor): 输入张量，形状为 (H, W) 或 (C, H, W)
+        x (torch.Tensor): Input tensor with shape (H, W) or (C, H, W)
         
     Returns:
-        torch.Tensor: TV正则化损失
+        torch.Tensor: TV regularization loss
     """
     if x.dim() == 2:
-        # 2D输入: (H, W)
+        # 2D input: (H, W)
         tv_h = torch.mean(torch.abs(x[1:, :] - x[:-1, :]))
         tv_w = torch.mean(torch.abs(x[:, 1:] - x[:, :-1]))
     elif x.dim() == 3:
-        # 3D输入: (C, H, W)
+        # 3D input: (C, H, W)
         tv_h = torch.mean(torch.abs(x[:, 1:, :] - x[:, :-1, :]))
         tv_w = torch.mean(torch.abs(x[:, :, 1:] - x[:, :, :-1]))
     else:
@@ -55,22 +55,22 @@ def w2_distance_from_discretized_pdf(pdf_values1: torch.Tensor,
                                      pdf_values2: torch.Tensor,
                                      x_coords: torch.Tensor) -> torch.Tensor:
     """
-    计算一个或多个离散 PDF 对之间的 W2 距离。
-    这个函数是完全可微分的，并且支持对多维输入进行批处理。
+    Compute the W2 distance between one or more pairs of discrete PDFs.
+    This function is fully differentiable and supports batched multi-dimensional inputs.
 
     Args:
-        pdf_values1 (torch.Tensor): 第一个分布的 PDF 值。
-                                    支持的形状: (N,), (B, N), (B, R, N)
-        pdf_values2 (torch.Tensor): 第二个分布的 PDF 值。形状必须与 pdf_values1 相同。
-        x_coords (torch.Tensor): PDF 值对应的 x 坐标。形状: (N,)
+        pdf_values1 (torch.Tensor): PDF values for the first distribution.
+                                    Supported shapes: (N,), (B, N), (B, R, N)
+        pdf_values2 (torch.Tensor): PDF values for the second distribution. Must match pdf_values1.
+        x_coords (torch.Tensor): x-coordinates corresponding to the PDF values. Shape: (N,)
 
     Returns:
-        torch.Tensor: W2 距离。
-                      如果输入是 (N,), 返回标量。
-                      如果输入是 (B, N), 返回 (B,)。
-                      如果输入是 (B, R, N), 返回 (B, R)。
+        torch.Tensor: W2 distance.
+                      If the input is (N,), returns a scalar.
+                      If the input is (B, N), returns (B,).
+                      If the input is (B, R, N), returns (B, R).
     """
-    # 记录原始形状以便恢复
+    # Record the original shape so it can be restored later
     original_shape = pdf_values1.shape
     
     if original_shape != pdf_values2.shape:
@@ -79,8 +79,8 @@ def w2_distance_from_discretized_pdf(pdf_values1: torch.Tensor,
     if original_shape[-1] != x_coords.shape[0]:
         raise ValueError(f"The last dimension of input tensors ({original_shape[-1]}) must match the size of x_coords ({x_coords.shape[0]}).")
 
-    # 将输入重塑为 (B_eff, N) 以进行批处理
-    # B_eff 是所有批次维度的乘积
+    # Reshape the inputs to (B_eff, N) for batching
+    # B_eff is the product of all batch dimensions
     num_points = original_shape[-1]
     reshaped_pdf1 = pdf_values1.reshape(-1, num_points)
     reshaped_pdf2 = pdf_values2.reshape(-1, num_points)
@@ -88,14 +88,14 @@ def w2_distance_from_discretized_pdf(pdf_values1: torch.Tensor,
     device = reshaped_pdf1.device
     effective_batch_size = reshaped_pdf1.shape[0]
     
-    # --- 1. 将PDF值置为正并进行归一化 ---
-    # 通过减去每个道中的全局最小值来确保非负，而不是取绝对值
+    # --- 1. Make the PDF values non-negative and normalize them ---
+    # Ensure non-negativity by subtracting the global minimum in each trace instead of taking abs
     min_pdf2 = reshaped_pdf2.min(dim=-1, keepdim=True)[0]
     
     non_negative_pdf1 = reshaped_pdf1 - min_pdf2*1.1
     non_negative_pdf2 = reshaped_pdf2 - min_pdf2*1.1
 
-    # 辅助函数，使用梯形法则计算积分（总面积）
+    # Helper function that computes the integral (total area) using the trapezoidal rule
     def _integrate(pdf, x):
         dx = torch.diff(x)
         # pdf shape: (B_eff, N), dx shape: (N-1)
@@ -105,12 +105,12 @@ def w2_distance_from_discretized_pdf(pdf_values1: torch.Tensor,
     total_area1 = _integrate(non_negative_pdf1, x_coords)
     total_area2 = _integrate(non_negative_pdf2, x_coords)
 
-    # 归一化，并添加 epsilon 以避免除以零
+    # Normalize and add epsilon to avoid division by zero
     # total_area shapes are (B_eff,), need to be (B_eff, 1) for broadcasting
     reshaped_pdf1 = non_negative_pdf1 / (total_area1.unsqueeze(-1) + 1e-9)
     reshaped_pdf2 = non_negative_pdf2 / (total_area2.unsqueeze(-1) + 1e-9)
     
-    # 辅助函数: 将离散 PDF 转换为离散 CDF
+    # Helper function: convert a discrete PDF to a discrete CDF
     def _pdf_to_cdf(pdf_values, x):
         dx = torch.diff(x)
         areas = (pdf_values[..., :-1] + pdf_values[..., 1:]) / 2.0 * dx
@@ -118,10 +118,10 @@ def w2_distance_from_discretized_pdf(pdf_values1: torch.Tensor,
         cdf_values = torch.cat([zeros, torch.cumsum(areas, dim=-1)], dim=-1)
         return cdf_values
 
-    # 辅助函数: 将离散 CDF 转换为离散分位数函数
+    # Helper function: convert a discrete CDF to a discrete quantile function
     def _cdf_to_quantile(cdf_values, x, t):
         # cdf_values: (B_eff, N), t: (N,)
-        # 为了让 searchsorted 正确处理批次，需要将 t 扩展为 (B_eff, N)
+        # Expand t to (B_eff, N) so searchsorted handles batching correctly
         t_expanded = t.expand(cdf_values.shape[0], -1)
         right_indices = torch.searchsorted(cdf_values, t_expanded)
         
@@ -139,24 +139,24 @@ def w2_distance_from_discretized_pdf(pdf_values1: torch.Tensor,
         # Add epsilon to avoid division by zero
         dcdf = torch.where(dcdf < 1e-8, torch.tensor(1.0, device=device, dtype=dcdf.dtype), dcdf)
         slope = (x_right - x_left) / dcdf
-        # 使用扩展后的 t_expanded 进行插值
+        # Interpolate using the expanded t_expanded tensor
         quantile_values = x_left + (t_expanded - cdf_left) * slope
         
         return quantile_values
 
-    # --- 主要计算流程 ---
+    # --- Main computation flow ---
     
-    # 1. 计算两个分布的 CDF
+    # 1. Compute the CDFs of both distributions
     cdf1 = _pdf_to_cdf(reshaped_pdf1, x_coords)
     cdf2 = _pdf_to_cdf(reshaped_pdf2, x_coords)
 
-    # 2. 计算两个分布的分位数函数
+    # 2. Compute the quantile functions of both distributions
     t = torch.linspace(0, 1, num_points, device=device, dtype=reshaped_pdf1.dtype)
     
     quantile1 = _cdf_to_quantile(cdf1, x_coords, t)
     quantile2 = _cdf_to_quantile(cdf2, x_coords, t)
 
-    # 3. 计算 W2 距离
+    # 3. Compute the W2 distance
     integrand = (quantile1 - quantile2) ** 2
     
     # Integrate along the last dimension (the N points)
@@ -164,7 +164,7 @@ def w2_distance_from_discretized_pdf(pdf_values1: torch.Tensor,
     
     result_flat = torch.sqrt(w2_squared) # Shape: (B_eff,)
     
-    # 恢复到原始批次形状
+    # Restore the original batch shape
     if len(original_shape) == 1: # Input was (N,)
         return result_flat.squeeze(0) # Return scalar
     else:
@@ -173,44 +173,44 @@ def w2_distance_from_discretized_pdf(pdf_values1: torch.Tensor,
 
 def agc_gain_control(wavelet, window_size=50, return_rms=False):
     """
-    自动增益控制(AGC)算法 - 向量化实现
-    对每个道应用滑动窗口的增益控制，使能量均衡
+    Automatic Gain Control (AGC) algorithm - vectorized implementation.
+    Apply sliding-window gain control to each trace to balance energy.
     
     Args:
-        wavelet (torch.Tensor): 输入波场数据，形状为 (n_shots, n_receivers, n_timesteps)
-        window_size (int): 滑动窗口大小
-        return_rms (bool): 是否返回RMS值
+        wavelet (torch.Tensor): Input wavefield data with shape (n_shots, n_receivers, n_timesteps)
+        window_size (int): Sliding window size
+        return_rms (bool): Whether to return RMS values
         
     Returns:
-        torch.Tensor: 应用AGC后的波场数据
-        torch.Tensor (可选): RMS值，形状为 (n_shots, n_receivers, n_timesteps)
+        torch.Tensor: Wavefield data after AGC
+        torch.Tensor (optional): RMS values with shape (n_shots, n_receivers, n_timesteps)
     """
-    # 获取输入形状
+    # Get the input shape
     n_shots, n_receivers, n_timesteps = wavelet.shape
     
-    # 创建输出张量
+    # Create the output tensor
     agc_wavelet = torch.zeros_like(wavelet)
     
-    # 将输入重塑为二维以便批处理 (n_shots*n_receivers, n_timesteps)
+    # Reshape the input to 2D for batching (n_shots*n_receivers, n_timesteps)
     wavelet_2d = wavelet.reshape(-1, n_timesteps)
     
-    # 创建一个张量来存储RMS值
+    # Create a tensor to store RMS values
     rms_values = torch.zeros_like(wavelet_2d)
-    # 计算每个时间点的RMS值
+    # Compute the RMS value at each time step
     for t in range(n_timesteps):
-        # 确定窗口范围
+        # Determine the window range
         start = max(0, t - window_size // 2)
         end = min(n_timesteps, t + window_size // 2)
         
-        # 计算所有道在当前时间点的窗口内的RMS值
+        # Compute the RMS value within the window for all traces at the current time step
         window = wavelet_2d[:, start:end]
-        rms = torch.sqrt(torch.mean(window ** 2, dim=1)) + 1e-9  # 添加小量避免除以零
+        rms = torch.sqrt(torch.mean(window ** 2, dim=1)) + 1e-9  # Add a small epsilon to avoid division by zero
         rms_values[:, t] = rms
     
-    # 应用增益控制
+    # Apply gain control
     agc_wavelet_2d = wavelet_2d / rms_values
     
-    # 恢复原始形状
+    # Restore the original shape
     agc_wavelet = agc_wavelet_2d.reshape(n_shots, n_receivers, n_timesteps)
     rms_values = rms_values.reshape(n_shots, n_receivers, n_timesteps)
     
@@ -321,7 +321,7 @@ def sample(scheduler, unet, npy_size, batch_size=1, sigma=0, rho=0, tau=1, gamma
     if save_x0_steps:
         x0_predictions = []
         
-    # 初始化用于保存中间过程的列表
+    # Initialize lists for storing intermediate results
     error_history = []
     error_0_history = []
     loss_history = []
@@ -329,7 +329,7 @@ def sample(scheduler, unet, npy_size, batch_size=1, sigma=0, rho=0, tau=1, gamma
     if x_true is not None:
         x_true = x_true.to(device)
         wave_true_init, source_locs_true, receiver_locs_true = receiver(x_true, device, shot_num=shot_num, source_locations=source_locations, receiver_locations=receiver_locations)
-        # 固定seed，保证噪声可复现
+        # Fix the seed so the noise is reproducible
         wave_true_noisy = wave_true_init + sigma * torch.randn(
         wave_true_init.shape,
         generator=generator,
@@ -351,20 +351,20 @@ def sample(scheduler, unet, npy_size, batch_size=1, sigma=0, rho=0, tau=1, gamma
             latent_model_input.requires_grad_(True)
         noise_pred = unet(latent_model_input, t_step).sample
             
-        # 执行scheduler step
+        # Execute the scheduler step
         scheduler_output = scheduler.step(noise_pred, t_step, latents, generator=generator)
         latents = scheduler_output.prev_sample
         
         current_rho = rho
         if save_x0_steps:
-            # 尝试使用scheduler返回的pred_original_sample，如果不支持则手动计算
+            # Try to use pred_original_sample from the scheduler; fall back to manual computation if unsupported
             if hasattr(scheduler_output, 'pred_original_sample') and scheduler_output.pred_original_sample is not None:
-                # 使用scheduler返回的pred_original_sample作为x_0预测
+                # Use the scheduler's pred_original_sample as the x_0 prediction
                 x0_pred = scheduler_output.pred_original_sample
             else:
-                # 手动计算x_0预测
-                # 根据DDPM的公式: x_0 = (x_t - sqrt(1-alpha_t) * epsilon) / sqrt(alpha_t)
-                # 其中epsilon是噪声预测，alpha_t是当前时间步的alpha值
+                # Manually compute the x_0 prediction
+                # According to the DDPM formula: x_0 = (x_t - sqrt(1-alpha_t) * epsilon) / sqrt(alpha_t)
+                # where epsilon is the noise prediction and alpha_t is the alpha value at the current timestep
                 alpha_t = scheduler.alphas_cumprod[t_step]
                 sqrt_alpha_t = torch.sqrt(alpha_t)
                 sqrt_one_minus_alpha_t = torch.sqrt(1.0 - alpha_t)
@@ -372,12 +372,12 @@ def sample(scheduler, unet, npy_size, batch_size=1, sigma=0, rho=0, tau=1, gamma
                 x0_pred = (latents - sqrt_one_minus_alpha_t * noise_pred) / sqrt_alpha_t
             
             if rho > 0:
-                # 根据选择的损失类型计算损失
+                # Compute the loss according to the selected loss type
                 wave_pred, source_locs_pred, receiver_locs_pred = receiver(x0_pred.squeeze()[1:-1, 1:-1], device, shot_num=shot_num, source_locations=source_locations, receiver_locations=receiver_locations)
-                # 不对合成波场做AGC，直接将观测波场的权重应用到合成波场
+                # Do not apply AGC to the synthetic wavefield; directly apply the observed wavefield weights to it
                 wave_pred = wave_pred * weights
 
-                # 计算基础损失（不再使用 mute 后的波场）
+                # Compute the base loss (no longer using the muted wavefield)
                 if loss_type == 'mse':
                     base_loss = torch.nn.functional.mse_loss(wave_pred, wave_true)
                 elif loss_type == 'w2':
@@ -390,13 +390,13 @@ def sample(scheduler, unet, npy_size, batch_size=1, sigma=0, rho=0, tau=1, gamma
                 else:
                     raise ValueError("Unsupported loss type. Use 'mse', or 'w2'.")
                 
-                # 添加范围约束损失
+                # Add the range constraint loss
                 range_loss = range_constraint_loss(x0_pred.squeeze()[1:-1, 1:-1])
                 
-                # 添加TV正则化损失
+                # Add the TV regularization loss
                 tv_loss = tv_regularization(x0_pred.squeeze()[1:-1, 1:-1])
                 
-                # 总损失 = 基础损失 + 范围约束损失 + TV正则化损失
+                # Total loss = base loss + range constraint loss + TV regularization loss
                 if normalize:
                     loss =  base_loss / base_loss_normalizer
                 else:
@@ -410,7 +410,7 @@ def sample(scheduler, unet, npy_size, batch_size=1, sigma=0, rho=0, tau=1, gamma
                 
                 c = 0.1
                 depth = latents_grad.shape[-1]
-                # 创建一个从1到tau的序列，然后重复depth次，使得每一行都相同
+                # Create a sequence from 1 to tau and repeat it depth times so each row is identical
                 if gamma == 0:
                     change_rate = torch.ones_like(latents_grad_x0)
                 else:
@@ -462,20 +462,20 @@ def plot_npy(latents, path, rows=4, cols=4, rho=0):
 
 def plot_real_and_pred(x_true, x_pred, path, rho=0):
     os.makedirs(path, exist_ok=True)
-    # 获取数据
+    # Get the data
     true_data = x_true.detach().cpu().numpy()
     pred_data = x_pred.detach().cpu().numpy()
     diff_data = true_data - pred_data
 
-    # 计算true和pred数据的全局最小值和最大值
+    # Compute the global minimum and maximum for the true and predicted data
     vmin = min(np.min(true_data), np.min(pred_data))
     vmax = max(np.max(true_data), np.max(pred_data))
 
-    # 计算差值图的颜色范围
+    # Compute the color range for the difference plot
     diff_vmax = max(abs(np.min(diff_data)), abs(np.max(diff_data)))
     diff_vmin = -diff_vmax
 
-    # True 图
+    # True plot
     fig, ax = plt.subplots(figsize=(5, 5))
     im = ax.imshow(true_data, vmin=vmin, vmax=vmax)
     ax.set_title("True")
@@ -485,7 +485,7 @@ def plot_real_and_pred(x_true, x_pred, path, rho=0):
     plt.savefig(os.path.join(path, f"real.png"), dpi=300, bbox_inches="tight", pad_inches=0.1)
     plt.close()
 
-    # Predicted 图
+    # Predicted plot
     fig, ax = plt.subplots(figsize=(5, 5))
     im = ax.imshow(pred_data, vmin=vmin, vmax=vmax)
     ax.set_title("Predicted")
@@ -495,7 +495,7 @@ def plot_real_and_pred(x_true, x_pred, path, rho=0):
     plt.savefig(os.path.join(path, f"pred.png"), dpi=300, bbox_inches="tight", pad_inches=0.1)
     plt.close()
 
-    # Difference 图
+    # Difference plot
     fig, ax = plt.subplots(figsize=(5, 5))
     im = ax.imshow(diff_data, vmin=diff_vmin, vmax=diff_vmax)
     ax.set_title("Difference")
@@ -510,12 +510,12 @@ def plot_wavefield(wavefield, path, filename_prefix, rho=0):
     n_shots = wavefield.shape[0]
     plt.figure(figsize=(5, 5))
 
-    i = 5  # 选择一个道进行可视化
+    i = 5  # Choose one trace for visualization
     ax = plt.gca()
-    # 只画前70个点，使用imshow灰度图
-    wavefield_np = wavefield[i].cpu().numpy().T  # 转置后再翻转，使时间轴在垂直方向，接收器位置轴在水平方向
+    # Only plot the first 70 points using a grayscale imshow plot
+    wavefield_np = wavefield[i].cpu().numpy().T  # Transpose and flip so the time axis is vertical and the receiver axis is horizontal
     data = wavefield_np[:, 0:70]
-    # 反转数值，使原本大的变小，小的变大
+    # Invert the values so larger values become smaller and smaller values become larger
     data_inverted = data.max() + data.min() - data
     im = ax.imshow(data_inverted, cmap='gray', aspect='auto')
     ax.set_title(f"Shot {i}")
@@ -575,7 +575,7 @@ def plot_errors(error_history, error_0_history, path, rho=0):
 
 def plot_loss(loss_history, path, rho=0):
     """
-    绘制loss的曲线图
+    Plot the loss curve.
     """
     os.makedirs(path, exist_ok=True)
     plt.figure(figsize=(10, 6))
@@ -591,16 +591,16 @@ def plot_loss(loss_history, path, rho=0):
 
 def save_results_to_file(error, error_0, loss, loss_type, rho, weight_power, filename="result.txt"):
     """
-    将error、error_0和loss的最终值保存到文件中（追加模式）
-    包含优化算法、误差计算方法和相应参数的信息
+    Save the final values of error, error_0, and loss to a file in append mode.
+    Include information about the optimization method, error metric, and relevant parameters.
     """
     with open(filename, "a") as f:
-        f.write(f"误差计算方法: {loss_type}\n")
-        f.write(f"梯度下降步长(rho): {rho}\n")
-        f.write(f"权重幂次(weight_power): {weight_power}\n")
-        f.write(f"最终Error: {error}\n")
-        f.write(f"最终Error_0: {error_0}\n")
-        f.write(f"最终Loss: {loss}\n")
+        f.write(f"Error metric: {loss_type}\n")
+        f.write(f"Gradient descent step size (rho): {rho}\n")
+        f.write(f"Weight power: {weight_power}\n")
+        f.write(f"Final Error: {error}\n")
+        f.write(f"Final Error_0: {error_0}\n")
+        f.write(f"Final Loss: {loss}\n")
         f.write("-" * 50 + "\n")
 
 
@@ -613,13 +613,13 @@ def plot_wavefield_comparison(wave_true, wave_pred, path, filename_prefix, rho=0
     if n_shots == 1:
         axes = axes.reshape(3, 1)
 
-    # 统一颜色条范围
+    # Use a shared colorbar range
     vmax = max(torch.max(torch.abs(wave_true)).item(), torch.max(torch.abs(wave_pred)).item())
     vmin = -vmax
     diff_vmax = torch.max(torch.abs(wave_true - wave_pred)).item()
     diff_vmin = -diff_vmax
 
-    # 标题
+    # Titles
     row_titles = ["Predicted", "True", "Difference"]
 
     for i in range(n_shots):
@@ -648,52 +648,52 @@ def plot_wavefield_comparison(wave_true, wave_pred, path, filename_prefix, rho=0
 
 def plot_receiver_waveforms(wave_true, wave_pred, path, filename_prefix, receiver_idx=0, rho=0):
     """
-    绘制指定receiver接收到的所有shot的一维波形图
-    将真实值和预测值画到同一个图中，不画差值
+    Plot 1D waveforms for all shots received by the specified receiver.
+    Plot the true and predicted values on the same figure, without the difference.
     
     Args:
-        wave_true: 真实波场数据，形状为 (n_shots, n_receivers, n_timesteps)
-        wave_pred: 预测波场数据，形状为 (n_shots, n_receivers, n_timesteps)
-        path: 保存路径
-        filename_prefix: 文件名前缀
-        receiver_idx: 要绘制的receiver索引，默认为0（第一个receiver）
-        rho: 优化参数
+        wave_true: True wavefield data with shape (n_shots, n_receivers, n_timesteps)
+        wave_pred: Predicted wavefield data with shape (n_shots, n_receivers, n_timesteps)
+        path: Save path
+        filename_prefix: File name prefix
+        receiver_idx: Receiver index to plot, defaults to 0 (the first receiver)
+        rho: Optimization parameter
     """
     os.makedirs(path, exist_ok=True)
     n_shots = wave_true.shape[0]
     n_timesteps = wave_true.shape[2]
     
-    # 创建子图，每个shot一个子图
+    # Create subplots, one for each shot
     fig, axes = plt.subplots(n_shots, 1, figsize=(12, 3 * n_shots))
     if n_shots == 1:
-        axes = [axes]  # 如果只有一个shot，确保axes是列表形式
+        axes = [axes]  # If there is only one shot, ensure axes is list-like
     
-    # 时间轴
-    time_axis = np.linspace(0, n_timesteps * 0.001, n_timesteps)  # 转换为秒
+    # Time axis
+    time_axis = np.linspace(0, n_timesteps * 0.001, n_timesteps)  # Convert to seconds
     
-    # 统一y轴范围
+    # Use a shared y-axis range
     y_max = max(torch.max(torch.abs(wave_true[:, receiver_idx, :])).item(),
                 torch.max(torch.abs(wave_pred[:, receiver_idx, :])).item())
     
     for i in range(n_shots):
         ax = axes[i]
         
-        # 提取当前shot和指定receiver的数据
+        # Extract data for the current shot and specified receiver
         true_data = wave_true[i, receiver_idx, :].cpu().detach().numpy()
         pred_data = wave_pred[i, receiver_idx, :].cpu().detach().numpy()
         
-        # 绘制波形
+        # Plot the waveforms
         ax.plot(time_axis, true_data, 'b-', label='True', linewidth=1.5)
         ax.plot(time_axis, pred_data, 'r--', label='Predicted', linewidth=1.5)
         
-        # 设置图标题和标签
+        # Set the title and labels
         ax.set_title(f"Shot {i+1}, Receiver {receiver_idx+1}")
         ax.set_xlabel("Time (s)")
         ax.set_ylabel("Amplitude")
         ax.legend()
         ax.grid(True, alpha=0.3)
         
-        # 设置统一的y轴范围
+        # Set a shared y-axis range
         ax.set_ylim(-y_max * 1.1, y_max * 1.1)
     
     plt.tight_layout()
@@ -703,48 +703,48 @@ def plot_receiver_waveforms(wave_true, wave_pred, path, filename_prefix, receive
 
 def plot_receiver_weights(weights, path, filename_prefix, receiver_idx=0, rho=0):
     """
-    绘制指定receiver接收到的所有shot的weights图
-    将weights以一维折线图形式展示
+    Plot the weights for all shots received by the specified receiver.
+    Display the weights as a 1D line plot.
     
     Args:
-        weights: 权重数据，形状为 (n_shots, n_receivers, n_timesteps)
-        path: 保存路径
-        filename_prefix: 文件名前缀
-        receiver_idx: 要绘制的receiver索引，默认为0（第一个receiver）
-        rho: 优化参数
+        weights: Weight data with shape (n_shots, n_receivers, n_timesteps)
+        path: Save path
+        filename_prefix: File name prefix
+        receiver_idx: Receiver index to plot, defaults to 0 (the first receiver)
+        rho: Optimization parameter
     """
     os.makedirs(path, exist_ok=True)
     n_shots = weights.shape[0]
     n_timesteps = weights.shape[2]
     
-    # 创建子图，每个shot一个子图
+    # Create subplots, one for each shot
     fig, axes = plt.subplots(n_shots, 1, figsize=(12, 3 * n_shots))
     if n_shots == 1:
-        axes = [axes]  # 如果只有一个shot，确保axes是列表形式
+        axes = [axes]  # If there is only one shot, ensure axes is list-like
     
-    # 时间轴
-    time_axis = np.linspace(0, n_timesteps * 0.001, n_timesteps)  # 转换为秒
+    # Time axis
+    time_axis = np.linspace(0, n_timesteps * 0.001, n_timesteps)  # Convert to seconds
     
-    # 统一y轴范围
+    # Use a shared y-axis range
     y_min = torch.min(weights).item()
     y_max = torch.max(weights).item()
     
     for i in range(n_shots):
         ax = axes[i]
         
-        # 提取当前shot和指定receiver的weights数据
+        # Extract weights data for the current shot and specified receiver
         weights_data = weights[i, receiver_idx, :].cpu().detach().numpy()
         
-        # 绘制weights为一维折线图
+        # Plot weights as a 1D line chart
         ax.plot(time_axis, weights_data, 'g-', linewidth=1.5)
         
-        # 设置图标题和标签
+        # Set the title and labels
         ax.set_title(f"Shot {i+1}, Receiver {receiver_idx+1} Weights")
         ax.set_xlabel("Time (s)")
         ax.set_ylabel("Weight Value")
         ax.grid(True, alpha=0.3)
         
-        # 设置统一的y轴范围
+        # Set a shared y-axis range
         ax.set_ylim(y_min * 0.9, y_max * 1.1)
     
     plt.tight_layout()
@@ -769,7 +769,7 @@ if __name__ == "__main__":
     source_locations = 'up'
 
     ddpm_scheduler = DDPMScheduler.from_pretrained(model_path, subfolder="scheduler")
-    ddpm_scheduler.set_timesteps(1000)  # 设置采样步数
+    ddpm_scheduler.set_timesteps(1000)  # Set the number of sampling steps
 
     with open('./configs/sample_config.yaml', 'r') as f:
         config = yaml.safe_load(f)
@@ -796,7 +796,7 @@ if __name__ == "__main__":
     torch.manual_seed(42)
     np.random.seed(42)
         
-    # 运行采样
+    # Run sampling
     latents_ddpm, x0_predictions, error_history, error_0_history, loss_history, wave_true_noisy = sample(
         ddpm_scheduler, unet, image_size,
         batch_size=batch_size,
@@ -810,7 +810,7 @@ if __name__ == "__main__":
         gamma=gamma,
         source_locations=source_locations,
         receiver_locations=receiver_locations,
-        k = k,  # 权重幂次p
+        k = k,  # Weight exponent p
         seed=seed,
         normalize=normalize,
         adap_along=adap_along
@@ -821,26 +821,26 @@ if __name__ == "__main__":
     
 
 
-    # 绘制error和error_0的曲线图
+    # Plot the error and error_0 curves
     plot_errors(error_history, error_0_history, path=os.path.join(target_path), rho=rho)
     
-    # 绘制loss的曲线图
+    # Plot the loss curve
     plot_loss(loss_history, path=os.path.join(target_path), rho=rho)
 
     save_latents_pt(latents_ddpm.squeeze()[1:-1,1:-1], path=os.path.join(target_path, "data"), rho=rho)
     
-    # 重新计算最终的波场用于绘图
+    # Recompute the final wavefield for plotting
     x_pred_final = latents_ddpm.squeeze()[1:-1, 1:-1]
     wave_pred_final, source_locs_pred, receiver_locs_pred = receiver(x_pred_final, device, shot_num=shot_num, source_locations=source_locations, receiver_locations=receiver_locations)
     wave_true_final, source_locs_true, receiver_locs_true = receiver(x_true, device, shot_num=shot_num, source_locations=source_locations, receiver_locations=receiver_locations)
     
-    # 绘制第一个receiver的五个shot的一维波形图（AGC前）
+    # Plot 1D waveforms for the first receiver across five shots (before AGC)
     plot_receiver_waveforms(
         wave_true_final,
         wave_pred_final,
         path=os.path.join(target_path, ),
         filename_prefix="receiver_waveforms",
-        receiver_idx=0,  # 第一个receiver
+        receiver_idx=0,  # First receiver
         rho=rho
     )
     
@@ -852,28 +852,28 @@ if __name__ == "__main__":
 
     plot_wavefield(wave_true_noisy, path=os.path.join(target_path, ), filename_prefix="wavefield_noisy", rho=rho)
     
-    # 绘制第一个receiver的五个shot的一维波形图（AGC后）
+    # Plot 1D waveforms for the first receiver across five shots (after AGC)
     plot_receiver_waveforms(
         wave_true_final_agc,
         wave_pred_final_agc,
         path=os.path.join(target_path, ),
         filename_prefix="receiver_waveforms_agc",
-        receiver_idx=0,  # 第一个receiver
+        receiver_idx=0,  # First receiver
         rho=rho
     )
     
-    # 绘制第一个接收器的五个shot的weights
+    # Plot weights for the first receiver across five shots
     plot_receiver_weights(
         weights_final,
         path=os.path.join(target_path, ),
         filename_prefix="receiver_weights",
-        receiver_idx=0,  # 第一个receiver
+        receiver_idx=0,  # First receiver
         rho=rho
     )
 
     shutil.copy('./configs/sample_config.yaml', os.path.join(target_path, "sample_config.yaml"))
     
-    # 保存最终结果到文件
+    # Save the final results to a file
     if error_history and error_0_history and loss_history:
         save_results_to_file(
             error_history[-1],
