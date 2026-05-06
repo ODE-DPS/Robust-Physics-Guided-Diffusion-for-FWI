@@ -1,0 +1,15 @@
+ablation/
+countdown_agc_auto/
+countdown_agc_auto_all/
+countdown_agc_auto_depth2/
+countdown_agc_auto_shot17/
+countdown_agc_auto_sigma0.05/
+countdown_agc_dps
+experiments/
+experiments-old/
+flatB/
+test_datasets/
+uv.lock
+.venv/
+countdown_agc_repeat_depth.py
+countdown_agc_repeat.py

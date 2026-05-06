@@ -1,0 +1,17 @@
+lam_range:  0 
+lam_tv:  0 
+warmup_steps: 0 
+grad_decay: 1
+rms_threshold: 0.01 
+agc_window_size: 10 
+loss_type: 'w2'
+ex_num: 0 
+k: 100
+seed: 0
+shot_num: 10
+rho: 1.45
+rate_down: 0.0001
+rate_power: 0.45
+normalize: True
+adap_along: True
+sigma: 0.000
