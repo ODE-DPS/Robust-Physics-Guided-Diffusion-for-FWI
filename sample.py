@@ -352,7 +352,7 @@ def receiver(v, device, shot_num, source_locations='up', receiver_locations='up'
     receiver_amplitudes = out[-1]
     return receiver_amplitudes, source_locations, receiver_locations
 
-def sample(scheduler, unet, npy_size, batch_size=1, sigma=0, rho=0, rate_down=1, rate_power=1, save_x0_steps=False, x_true=None, loss_type='mse', grad_decay=1.0, lam_range=0.1, lam_tv=0.01, shot_num=5, source_locations='up', receiver_locations='up', warmup_steps=0, k=100, rms_threshold=0.01, agc_window_size=50, seed=1, normalize=True, adap_along=True):
+def sample(scheduler, unet, npy_size, batch_size=1, sigma=0, rho=0, tau=1, gamma=1, save_x0_steps=False, x_true=None, loss_type='mse', shot_num=5, source_locations='up', receiver_locations='up', k=100, seed=1, normalize=True, adap_along=True):
     
     unet.eval()
     for param in unet.parameters():
@@ -383,9 +383,6 @@ def sample(scheduler, unet, npy_size, batch_size=1, sigma=0, rho=0, rate_down=1,
         device=device,
         dtype=unet.dtype
     )
-        # 使用AGC算法处理观测数据，并获取RMS值（但不应用AGC）
-        
-        # _, rms_values = agc_gain_control(wave_true, window_size=agc_window_size, return_rms=True)
         
         rms_values = wave_true_noisy
         rms_max = torch.max(abs(wave_true_noisy))
@@ -405,13 +402,7 @@ def sample(scheduler, unet, npy_size, batch_size=1, sigma=0, rho=0, rate_down=1,
         scheduler_output = scheduler.step(noise_pred, t_step, latents, generator=generator)
         latents = scheduler_output.prev_sample
         
-        # 计算当前步长：warm-up阶段线性增长，之后保持定值
-        if warmup_steps > 0 and i < warmup_steps:
-            # warm-up阶段：步长从0线性增长到rho
-            current_rho = rho * (i + 1) / warmup_steps
-        else:
-            # warm-up结束后：保持定值rho
-            current_rho = rho
+        current_rho = rho
         if save_x0_steps:
             # 尝试使用scheduler返回的pred_original_sample，如果不支持则手动计算
             if hasattr(scheduler_output, 'pred_original_sample') and scheduler_output.pred_original_sample is not None:
@@ -456,28 +447,27 @@ def sample(scheduler, unet, npy_size, batch_size=1, sigma=0, rho=0, rate_down=1,
                 
                 # 总损失 = 基础损失 + 范围约束损失 + TV正则化损失
                 if normalize:
-                    loss =  base_loss / base_loss_normalizer + lam_range * range_loss + lam_tv * tv_loss
+                    loss =  base_loss / base_loss_normalizer
                 else:
-                    loss =  base_loss + lam_range * range_loss + lam_tv * tv_loss
+                    loss =  base_loss
 
                 weight = torch.autograd.grad(loss, x0_pred, retain_graph=True)[0]
                 # print(weight.abs().mean(dim=3).squeeze())
 
                 latents_grad_x0 = torch.autograd.grad(loss, x0_pred, retain_graph=True)[0]
                 latents_grad = torch.autograd.grad(loss, latent_model_input)[0]
-                # 使用current_rho而不是rho，以便实现warmup
-                current_rho = current_rho * grad_decay
+                
                 c = 0.1
                 depth = latents_grad.shape[-1]
-                # 创建一个从1到rate_down的序列，然后重复depth次，使得每一行都相同
-                if rate_power == 0:
+                # 创建一个从1到tau的序列，然后重复depth次，使得每一行都相同
+                if gamma == 0:
                     change_rate = torch.ones_like(latents_grad_x0)
                 else:
-                    a = (rate_down-1)/(depth**rate_power-1)
+                    a = (tau-1)/(depth**gamma-1)
                     b = 1-a
-                    base_rate = torch.linspace(1, rate_down, depth).unsqueeze(0).repeat(depth, 1).to(device)
-                    # change_rate = a*base_rate**rate_power+b
-                    change_rate = ((torch.max(abs(latents_grad_x0))+rate_down)/(abs(latents_grad_x0)+rate_down))**rate_power
+                    base_rate = torch.linspace(1, tau, depth).unsqueeze(0).repeat(depth, 1).to(device)
+                    # change_rate = a*base_rate**gamma+b
+                    change_rate = ((torch.max(abs(latents_grad_x0))+tau)/(abs(latents_grad_x0)+tau))**gamma
 
                 if adap_along:
                     latents = latents - current_rho * change_rate * latents_grad * torch.exp(-tv_loss/c)
@@ -500,13 +490,13 @@ def sample(scheduler, unet, npy_size, batch_size=1, sigma=0, rho=0, rate_down=1,
             else:
                 loss_history.append(0.0)
                 
-            progress_bar.set_postfix(error=error.item(), error_0=error_0.item(), loss=loss.item() if rho > 0 else 0, current_rho=current_rho if warmup_steps > 0 and i < warmup_steps else (current_rho if rho > 0 else 0))
+            progress_bar.set_postfix(error=error.item(), error_0=error_0.item(), loss=loss.item() if rho > 0 else 0, current_rho=current_rho)
             
     if save_x0_steps:
         return latents, x0_predictions, error_history, error_0_history, loss_history, wave_true_noisy
     return latents, None, error_history, error_0_history, loss_history, wave_true_noisy
 
-def plot_npy(latents, path, rows=4, cols=4, rho=0, grad_decay=1.0):
+def plot_npy(latents, path, rows=4, cols=4, rho=0):
     os.makedirs(path, exist_ok=True)
     fig, axes = plt.subplots(rows, cols, figsize=(16, 16))
     if rows == 1 and cols == 1:
@@ -517,9 +507,9 @@ def plot_npy(latents, path, rows=4, cols=4, rho=0, grad_decay=1.0):
         ax.axis("off")
         fig.colorbar(im, ax=ax)
     plt.tight_layout()
-    plt.savefig(os.path.join(path, f"sample_rho_{rho}_{grad_decay}.png"), dpi=300, bbox_inches="tight", pad_inches=0.1)
+    plt.savefig(os.path.join(path, f"sample_rho_{rho}.png"), dpi=300, bbox_inches="tight", pad_inches=0.1)
 
-def plot_real_and_pred(x_true, x_pred, path, rho=0, grad_decay=1.0):
+def plot_real_and_pred(x_true, x_pred, path, rho=0):
     os.makedirs(path, exist_ok=True)
     # 获取数据
     true_data = x_true.detach().cpu().numpy()
@@ -564,7 +554,7 @@ def plot_real_and_pred(x_true, x_pred, path, rho=0, grad_decay=1.0):
     plt.savefig(os.path.join(path, f"diff.png"), dpi=300, bbox_inches="tight", pad_inches=0.1)
     plt.close()
 
-def plot_wavefield(wavefield, path, filename_prefix, rho=0, grad_decay=1.0):
+def plot_wavefield(wavefield, path, filename_prefix, rho=0):
     os.makedirs(path, exist_ok=True)
     n_shots = wavefield.shape[0]
     plt.figure(figsize=(5, 5))
@@ -583,7 +573,7 @@ def plot_wavefield(wavefield, path, filename_prefix, rho=0, grad_decay=1.0):
     plt.savefig(os.path.join(path, f"{filename_prefix}_shot{i}.png"), dpi=300, bbox_inches="tight", pad_inches=0.1)
     plt.close()
     
-def plot_npy_steps(x0_predictions, path, rows=4, cols=4, rho=0, grad_decay=1.0):
+def plot_npy_steps(x0_predictions, path, rows=4, cols=4, rho=0):
     os.makedirs(path, exist_ok=True)
     num_steps = len(x0_predictions)
     if num_steps > rows * cols:
@@ -601,7 +591,7 @@ def plot_npy_steps(x0_predictions, path, rows=4, cols=4, rho=0, grad_decay=1.0):
             ax = axes[step // cols, step % cols]
             ax.axis("off")
         plt.tight_layout()
-        plt.savefig(os.path.join(path, f"x0_step_{step}_rho_{rho}_{grad_decay}.png"), dpi=300, bbox_inches="tight", pad_inches=0.1)
+        plt.savefig(os.path.join(path, f"x0_step_{step}_rho_{rho}.png"), dpi=300, bbox_inches="tight", pad_inches=0.1)
         plt.close()
     else:
         for batch_idx in range(len(x0_predictions[0])):
@@ -615,10 +605,10 @@ def plot_npy_steps(x0_predictions, path, rows=4, cols=4, rho=0, grad_decay=1.0):
                 ax = axes[step // cols, step % cols]
                 ax.axis("off")
             plt.tight_layout()
-            plt.savefig(os.path.join(path, f"batch_{batch_idx}_x0_step_{step}_rho_{rho}_{grad_decay}.png"), dpi=300, bbox_inches="tight", pad_inches=0.1)
+            plt.savefig(os.path.join(path, f"batch_{batch_idx}_x0_step_{step}_rho_{rho}.png"), dpi=300, bbox_inches="tight", pad_inches=0.1)
             plt.close()
 
-def plot_errors(error_history, error_0_history, path, rho=0, grad_decay=1.0):
+def plot_errors(error_history, error_0_history, path, rho=0):
     os.makedirs(path, exist_ok=True)
     plt.figure(figsize=(10, 6))
     steps = range(len(error_history))
@@ -629,10 +619,10 @@ def plot_errors(error_history, error_0_history, path, rho=0, grad_decay=1.0):
     plt.title(f'Error and Error_0 over Steps (rho={rho})')
     plt.legend()
     plt.grid(True)
-    plt.savefig(os.path.join(path, f"errors_rho_{rho}_{grad_decay}.png"), dpi=300, bbox_inches="tight")
+    plt.savefig(os.path.join(path, f"errors_rho_{rho}.png"), dpi=300, bbox_inches="tight")
     plt.close()
 
-def plot_loss(loss_history, path, rho=0, grad_decay=1.0):
+def plot_loss(loss_history, path, rho=0):
     """
     绘制loss的曲线图
     """
@@ -645,10 +635,10 @@ def plot_loss(loss_history, path, rho=0, grad_decay=1.0):
     plt.title(f'Loss over Steps (rho={rho})')
     plt.legend()
     plt.grid(True)
-    plt.savefig(os.path.join(path, f"loss_rho_{rho}_{grad_decay}.png"), dpi=300, bbox_inches="tight")
+    plt.savefig(os.path.join(path, f"loss_rho_{rho}.png"), dpi=300, bbox_inches="tight")
     plt.close()
 
-def save_results_to_file(error, error_0, loss, loss_type, rho, grad_decay, lam_range, lam_tv, warmup_steps, weight_power, rms_threshold, agc_window_size, filename="result.txt"):
+def save_results_to_file(error, error_0, loss, loss_type, rho, weight_power, filename="result.txt"):
     """
     将error、error_0和loss的最终值保存到文件中（追加模式）
     包含优化算法、误差计算方法和相应参数的信息
@@ -656,12 +646,7 @@ def save_results_to_file(error, error_0, loss, loss_type, rho, grad_decay, lam_r
     with open(filename, "a") as f:
         f.write(f"误差计算方法: {loss_type}\n")
         f.write(f"梯度下降步长(rho): {rho}\n")
-        f.write(f"梯度衰减参数(grad_decay): {grad_decay}\n")
-        f.write(f"Warm-up步数: {warmup_steps}\n")
-        f.write(f"权重参数: lam_range={lam_range}, lam_tv={lam_tv}\n")
         f.write(f"权重幂次(weight_power): {weight_power}\n")
-        f.write(f"RMS阈值(rms_threshold): {rms_threshold}\n")
-        f.write(f"AGC窗口大小(agc_window_size): {agc_window_size}\n")
         f.write(f"最终Error: {error}\n")
         f.write(f"最终Error_0: {error_0}\n")
         f.write(f"最终Loss: {loss}\n")
@@ -669,7 +654,7 @@ def save_results_to_file(error, error_0, loss, loss_type, rho, grad_decay, lam_r
 
 
 
-def plot_wavefield_comparison(wave_true, wave_pred, path, filename_prefix, rho=0, grad_decay=1.0):
+def plot_wavefield_comparison(wave_true, wave_pred, path, filename_prefix, rho=0):
     os.makedirs(path, exist_ok=True)
     n_shots = wave_true.shape[0]
     
@@ -707,10 +692,10 @@ def plot_wavefield_comparison(wave_true, wave_pred, path, filename_prefix, rho=0
             axes[2, i].set_ylabel(row_titles[2])
 
     plt.tight_layout()
-    plt.savefig(os.path.join(path, f"{filename_prefix}_rho_{rho}_{grad_decay}.png"), dpi=300, bbox_inches="tight", pad_inches=0.1)
+    plt.savefig(os.path.join(path, f"{filename_prefix}_rho_{rho}.png"), dpi=300, bbox_inches="tight", pad_inches=0.1)
     plt.close()
 
-def plot_receiver_waveforms(wave_true, wave_pred, path, filename_prefix, receiver_idx=0, rho=0, grad_decay=1.0):
+def plot_receiver_waveforms(wave_true, wave_pred, path, filename_prefix, receiver_idx=0, rho=0):
     """
     绘制指定receiver接收到的所有shot的一维波形图
     将真实值和预测值画到同一个图中，不画差值
@@ -722,7 +707,6 @@ def plot_receiver_waveforms(wave_true, wave_pred, path, filename_prefix, receive
         filename_prefix: 文件名前缀
         receiver_idx: 要绘制的receiver索引，默认为0（第一个receiver）
         rho: 优化参数
-        grad_decay: 梯度衰减参数
     """
     os.makedirs(path, exist_ok=True)
     n_shots = wave_true.shape[0]
@@ -762,11 +746,11 @@ def plot_receiver_waveforms(wave_true, wave_pred, path, filename_prefix, receive
         ax.set_ylim(-y_max * 1.1, y_max * 1.1)
     
     plt.tight_layout()
-    plt.savefig(os.path.join(path, f"{filename_prefix}_receiver_{receiver_idx+1}_rho_{rho}_{grad_decay}.png"),
+    plt.savefig(os.path.join(path, f"{filename_prefix}_receiver_{receiver_idx+1}_rho_{rho}.png"),
                 dpi=300, bbox_inches="tight", pad_inches=0.1)
     plt.close()
 
-def plot_receiver_weights(weights, path, filename_prefix, receiver_idx=0, rho=0, grad_decay=1.0):
+def plot_receiver_weights(weights, path, filename_prefix, receiver_idx=0, rho=0):
     """
     绘制指定receiver接收到的所有shot的weights图
     将weights以一维折线图形式展示
@@ -777,7 +761,6 @@ def plot_receiver_weights(weights, path, filename_prefix, receiver_idx=0, rho=0,
         filename_prefix: 文件名前缀
         receiver_idx: 要绘制的receiver索引，默认为0（第一个receiver）
         rho: 优化参数
-        grad_decay: 梯度衰减参数
     """
     os.makedirs(path, exist_ok=True)
     n_shots = weights.shape[0]
@@ -814,11 +797,11 @@ def plot_receiver_weights(weights, path, filename_prefix, receiver_idx=0, rho=0,
         ax.set_ylim(y_min * 0.9, y_max * 1.1)
     
     plt.tight_layout()
-    plt.savefig(os.path.join(path, f"{filename_prefix}_receiver_{receiver_idx+1}_weights_rho_{rho}_{grad_decay}.png"),
+    plt.savefig(os.path.join(path, f"{filename_prefix}_receiver_{receiver_idx+1}_weights_rho_{rho}.png"),
                 dpi=300, bbox_inches="tight", pad_inches=0.1)
     plt.close()
 
-def save_latents_pt(x, path, rho, grad_decay):
+def save_latents_pt(x, path, rho):
     if not os.path.exists(path):
         os.makedirs(path)
     torch.save(x, os.path.join(path, f"pred.pt"))
@@ -840,13 +823,6 @@ if __name__ == "__main__":
     with open('./configs/sample_config.yaml', 'r') as f:
         config = yaml.safe_load(f)
 
-    lam_range = config["lam_range"]  # 范围约束权重
-    lam_tv = config.get("lam_tv", 0)   # TV正则化权重
-    warmup_steps = config.get("warmup_steps", 0)  # Warm-up步数
-    grad_decay = config.get("grad_decay", 1)
-
-    rms_threshold = config.get("rms_threshold", 0.01)  # RMS阈值
-    agc_window_size = config.get("agc_window_size", 10)  # AGC窗口大小
     loss_type = config.get("loss_type", 'w2')
     ex_num = config.get("ex_num", 69)  # 69
     x_true = np.load(f"test_datasets/{ex_num}.npy")
@@ -855,8 +831,8 @@ if __name__ == "__main__":
     seed = config.get("seed", 9)
     shot_num = config.get("shot_num", 10)
     rho = config.get("rho", 1.65)
-    rate_down = config.get("rate_down", 1e-4)
-    rate_power = config.get("rate_power", 0.55)
+    tau = config.get("tau", 1e-4)
+    gamma = config.get("gamma", 0.55)
     normalize = config.get("normalize", True)
     adap_along = config.get("adap_along", True)
     sigma = config.get("sigma", 0)
@@ -878,50 +854,34 @@ if __name__ == "__main__":
         save_x0_steps=True,
         x_true=x_true,
         loss_type=loss_type,
-        grad_decay=grad_decay,
-        lam_range=lam_range,
-        lam_tv=lam_tv,
         shot_num=shot_num,
-        rate_down=rate_down,
-        rate_power=rate_power,
+        tau=tau,
+        gamma=gamma,
         source_locations=source_locations,
         receiver_locations=receiver_locations,
-        warmup_steps=warmup_steps,
         k = k,  # 权重幂次p
-        rms_threshold=rms_threshold,  # RMS阈值
-        agc_window_size=agc_window_size,  # AGC窗口大小
         seed=seed,
         normalize=normalize,
         adap_along=adap_along
     )
     
-    # plot_npy_steps(x0_predictions, path=os.path.join(target_path,f"./x0_steps_{loss_type}"), rho=rho, rows=8, cols=8, grad_decay=grad_decay)
-    plot_real_and_pred(x_true, latents_ddpm.squeeze()[1:-1, 1:-1], path=os.path.join(target_path), rho=rho, grad_decay=grad_decay)
+    # plot_npy_steps(x0_predictions, path=os.path.join(target_path,f"./x0_steps_{loss_type}"), rho=rho, rows=8, cols=8)
+    plot_real_and_pred(x_true, latents_ddpm.squeeze()[1:-1, 1:-1], path=os.path.join(target_path), rho=rho)
     
 
 
     # 绘制error和error_0的曲线图
-    plot_errors(error_history, error_0_history, path=os.path.join(target_path), rho=rho, grad_decay=grad_decay)
+    plot_errors(error_history, error_0_history, path=os.path.join(target_path), rho=rho)
     
     # 绘制loss的曲线图
-    plot_loss(loss_history, path=os.path.join(target_path), rho=rho, grad_decay=grad_decay)
+    plot_loss(loss_history, path=os.path.join(target_path), rho=rho)
 
-    save_latents_pt(latents_ddpm.squeeze()[1:-1,1:-1], path=os.path.join(target_path, "data"), rho=rho, grad_decay=grad_decay)
+    save_latents_pt(latents_ddpm.squeeze()[1:-1,1:-1], path=os.path.join(target_path, "data"), rho=rho)
     
     # 重新计算最终的波场用于绘图
     x_pred_final = latents_ddpm.squeeze()[1:-1, 1:-1]
     wave_pred_final, source_locs_pred, receiver_locs_pred = receiver(x_pred_final, device, shot_num=shot_num, source_locations=source_locations, receiver_locations=receiver_locations)
     wave_true_final, source_locs_true, receiver_locs_true = receiver(x_true, device, shot_num=shot_num, source_locations=source_locations, receiver_locations=receiver_locations)
-    
-    # 绘制原始波场对比图（不应用AGC）
-    '''plot_wavefield_comparison(
-        wave_true_final,
-        wave_pred_final,
-        path=os.path.join(target_path, ),
-        filename_prefix="wavefield_comparison",
-        rho=rho,
-        grad_decay=grad_decay
-    )'''
     
     # 绘制第一个receiver的五个shot的一维波形图（AGC前）
     plot_receiver_waveforms(
@@ -930,29 +890,16 @@ if __name__ == "__main__":
         path=os.path.join(target_path, ),
         filename_prefix="receiver_waveforms",
         receiver_idx=0,  # 第一个receiver
-        rho=rho,
-        grad_decay=grad_decay
+        rho=rho
     )
     
-    # 应用AGC并绘制对比图
-    # 计算真实波场的RMS值和权重
-    # _, rms_values_final = agc_gain_control(wave_true_final, window_size=agc_window_size, return_rms=True)
     rms_values_final = wave_true_final
     rms_max_final = torch.max(abs(rms_values_final))
     weights_final = 1/(k*abs(rms_values_final)/rms_max_final+1)
     wave_true_final_agc = wave_true_final * weights_final
     wave_pred_final_agc = wave_pred_final * weights_final
 
-    plot_wavefield(wave_true_noisy, path=os.path.join(target_path, ), filename_prefix="wavefield_noisy", rho=rho, grad_decay=grad_decay)
-    
-    '''plot_wavefield_comparison(
-        wave_true_final_agc,
-        wave_pred_final_agc,
-        path=os.path.join(target_path, ),
-        filename_prefix="wavefield_comparison_agc",
-        rho=rho,
-        grad_decay=grad_decay
-    )'''
+    plot_wavefield(wave_true_noisy, path=os.path.join(target_path, ), filename_prefix="wavefield_noisy", rho=rho)
     
     # 绘制第一个receiver的五个shot的一维波形图（AGC后）
     plot_receiver_waveforms(
@@ -961,8 +908,7 @@ if __name__ == "__main__":
         path=os.path.join(target_path, ),
         filename_prefix="receiver_waveforms_agc",
         receiver_idx=0,  # 第一个receiver
-        rho=rho,
-        grad_decay=grad_decay
+        rho=rho
     )
     
     # 绘制第一个接收器的五个shot的weights
@@ -971,8 +917,7 @@ if __name__ == "__main__":
         path=os.path.join(target_path, ),
         filename_prefix="receiver_weights",
         receiver_idx=0,  # 第一个receiver
-        rho=rho,
-        grad_decay=grad_decay
+        rho=rho
     )
 
     shutil.copy('./configs/sample_config.yaml', os.path.join(target_path, "sample_config.yaml"))
@@ -985,12 +930,6 @@ if __name__ == "__main__":
             loss_history[-1],
             loss_type=loss_type,
             rho=rho,
-            grad_decay=grad_decay,
-            lam_range=lam_range,
-            lam_tv=lam_tv,
-            warmup_steps=warmup_steps,
             weight_power=k,
-            rms_threshold=rms_threshold,
-            agc_window_size=agc_window_size,
             filename=os.path.join(target_path,f"./result_{loss_type}.txt")
         )

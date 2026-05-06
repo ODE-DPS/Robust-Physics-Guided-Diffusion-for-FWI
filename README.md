@@ -18,6 +18,7 @@ The workflow combines:
   - deepwave
   - matplotlib
   - tqdm
+  - accelerate
 
 ## Setup
 
