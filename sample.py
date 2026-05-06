@@ -10,54 +10,7 @@ import yaml
 import datetime
 import shutil
 
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
-
-def cumsum_error(x, y):
-    """计算两个信号积分后的均方误差，仿照W2损失函数添加归一化"""
-    # 获取输入形状
-    original_shape = x.shape
-    
-    # 将输入重塑为二维以便批处理
-    if x.dim() > 1:
-        x_reshaped = x.reshape(-1, x.shape[-1])
-        y_reshaped = y.reshape(-1, y.shape[-1])
-    else:
-        x_reshaped = x.unsqueeze(0)
-        y_reshaped = y.unsqueeze(0)
-    
-    batch_size = x_reshaped.shape[0]
-    n_points = x_reshaped.shape[1]
-    
-    # 计算每个批次的最小值
-    min_vals = torch.min(y_reshaped, dim=-1, keepdim=True)[0]
-    
-    # 确保非负，并减去最小值的1.1倍
-    non_negative_x = x_reshaped - 1.1 * min_vals
-    non_negative_y = y_reshaped - 1.1 * min_vals
-    
-    # 计算积分（使用梯形法则）
-    def _integrate(signal):
-        # signal shape: (batch_size, n_points)
-        # 使用简单梯形法则计算积分
-        integral = torch.sum(signal, dim=-1)
-        return integral
-    
-    '''# 计算每个信号的总积分
-    total_integral_x = _integrate(non_negative_x)
-    total_integral_y = _integrate(non_negative_y)
-    
-    # 归一化，添加小量避免除以零
-    normalized_x = non_negative_x / (total_integral_x.unsqueeze(-1) + 1e-9)
-    normalized_y = non_negative_y / (total_integral_y.unsqueeze(-1) + 1e-9)
-    '''    
-    # 计算累积和
-    int_x = torch.cumsum(non_negative_x, dim=-1)
-    int_y = torch.cumsum(non_negative_y, dim=-1)
-    
-    # 计算均方误差
-    mse = torch.linalg.norm(int_x - int_y)
-    
-    return mse
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def range_constraint_loss(x):
     """
@@ -427,8 +380,6 @@ def sample(scheduler, unet, npy_size, batch_size=1, sigma=0, rho=0, tau=1, gamma
                 # 计算基础损失（不再使用 mute 后的波场）
                 if loss_type == 'mse':
                     base_loss = torch.nn.functional.mse_loss(wave_pred, wave_true)
-                elif loss_type == 'cumsum':
-                    base_loss = cumsum_error(wave_pred, wave_true)
                 elif loss_type == 'w2':
                     n_shots, n_receivers, n_timesteps = wave_pred.shape
                     wave_pred_reshaped = wave_pred.reshape(-1, n_timesteps)
@@ -437,7 +388,7 @@ def sample(scheduler, unet, npy_size, batch_size=1, sigma=0, rho=0, tau=1, gamma
                     base_loss = torch.mean(w2_distance_from_discretized_pdf(wave_pred_reshaped, wave_true_reshaped, x_coords))
                     base_loss_normalizer = torch.mean(w2_distance_from_discretized_pdf(torch.zeros_like(wave_true_reshaped), wave_true_reshaped, x_coords))
                 else:
-                    raise ValueError("Unsupported loss type. Use 'mse', 'cumsum', or 'w2'.")
+                    raise ValueError("Unsupported loss type. Use 'mse', or 'w2'.")
                 
                 # 添加范围约束损失
                 range_loss = range_constraint_loss(x0_pred.squeeze()[1:-1, 1:-1])
@@ -824,7 +775,7 @@ if __name__ == "__main__":
         config = yaml.safe_load(f)
 
     loss_type = config.get("loss_type", 'w2')
-    ex_num = config.get("ex_num", 69)  # 69
+    ex_num = config.get("ex_num", 0)  # 69
     x_true = np.load(f"test_datasets/{ex_num}.npy")
     x_true=torch.tensor(x_true, device=device, dtype=unet.dtype)/1500-2
     k = config.get("k", 100)

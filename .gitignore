@@ -8,7 +8,7 @@ countdown_agc_dps
 experiments/
 experiments-old/
 flatB/
-test_datasets/
+test_datasets_all/
 uv.lock
 .venv/
 countdown_agc_repeat_depth.py

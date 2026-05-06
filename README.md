@@ -66,7 +66,7 @@ Typical outputs include:
 ## Configuration (sample_config.yaml)
 
 Key fields include:
-- `loss_type`: `mse`, `cumsum`, or `w2`
+- `loss_type`: `mse`, or `w2`
 - `rho`: guidance step size
 - `shot_num`: number of shots used in simulation
 - `k`, `sigma`, `seed`: weighting/noise/randomness controls
@@ -81,8 +81,3 @@ Key fields include:
 - `test_datasets/`: velocity model test samples (`.npy`)
 - `experiments/`: generated experiment outputs
 
-## Notes
-
-- The code uses hardcoded receiver/source geometry defaults in scripts.
-- Device selection is script-defined (GPU if available, otherwise CPU).
-- Running on CPU can be very slow for full sampling steps.
