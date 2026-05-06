@@ -1,0 +1,12 @@
+loss_type: 'w2'
+testdata_path: test_datasets/FlatFault-B/0.npy 
+model_path: Models/FlatFault-B
+k: 100
+seed: 0
+shot_num: 10
+rho: 1.45
+tau: 0.0001
+gamma: 0.45
+normalize: True
+adap_along: True
+sigma: 0.05

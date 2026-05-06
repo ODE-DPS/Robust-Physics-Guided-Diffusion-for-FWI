@@ -13,3 +13,4 @@ uv.lock
 .venv/
 countdown_agc_repeat_depth.py
 countdown_agc_repeat.py
+Models/FlatFault-B/
