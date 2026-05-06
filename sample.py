@@ -761,7 +761,12 @@ if __name__ == "__main__":
     image_size = 72
     batch_size = 1
 
-    config_path = './configs/sample-config-FlatFault-B.yaml'
+    import argparse
+    parser = argparse.ArgumentParser(description="Run sampling with a pretrained UNet model and DDPMScheduler.")
+    parser.add_argument("--config", type=str, default="./configs/sample-config-FlatFault-B.yaml", help="Path to the configuration YAML file.")
+    args = parser.parse_args()
+
+    config_path = args.config
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
 
