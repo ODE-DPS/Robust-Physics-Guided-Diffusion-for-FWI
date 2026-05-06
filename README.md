@@ -44,12 +44,12 @@ uv sync
 2. Run the main script:
 
 ```bash
-python countdown_agc.py
+python sample.py
 ```
 
 ## Main Script Behavior
 
-`countdown_agc.py` will:
+`sample.py` will:
 - Load model components from `Model/unet` and `Model/scheduler`
 - Load a test velocity sample from `test_datasets/` based on `ex_num`
 - Run DDPM sampling with optional guidance and regularization
@@ -76,7 +76,7 @@ Key fields include:
 
 ## Repository Layout
 
-- `countdown_agc.py`: main single-run experiment script
+- `sample.py`: main single-run experiment script
 - `configs/`: YAML configuration files
 - `Model/`: local pretrained diffusion model artifacts
 - `test_datasets/`: velocity model test samples (`.npy`)
